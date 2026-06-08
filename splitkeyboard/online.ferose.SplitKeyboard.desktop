@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=SplitKeyboard
+Comment=A split-layout on-screen keyboard for X11 (wide displays / Steam Deck)
+Exec=splitkeyboard -platform xcb
+Icon=online.ferose.SplitKeyboard
+Type=Application
+Categories=Qt;Utility;Accessibility;
+Terminal=false
+StartupNotify=false

@@ -1,0 +1,14 @@
+# flatpak-builder output and cache — generated, do not commit
+/builddir/
+/fhbuild/
+/.flatpak-builder/
+*.flatpak
+# exported ostree repos (any name passed to --repo)
+/repo/
+/fhrepo/
+/localrepo/
+/localbuilddir/
+
+# Internal dev guidance & planning — kept local, not part of the published repo
+/CLAUDE.md
+/plans/

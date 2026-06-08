@@ -1,0 +1,18 @@
+<RCC>
+    <qresource prefix="/">
+        <file>resources/en_US.keymap</file>
+        <file>resources/hide-kbd.svg</file>
+        <file>resources/tray.svg</file>
+        <file>resources/shift.svg</file>
+        <file>resources/backspace.svg</file>
+        <file>resources/enter.svg</file>
+        <file>resources/tab.svg</file>
+        <file>resources/space.svg</file>
+        <file>resources/arrow-up.svg</file>
+        <file>resources/arrow-down.svg</file>
+        <file>resources/arrow-left.svg</file>
+        <file>resources/arrow-right.svg</file>
+        <file>resources/home.svg</file>
+        <file>resources/end.svg</file>
+    </qresource>
+</RCC>

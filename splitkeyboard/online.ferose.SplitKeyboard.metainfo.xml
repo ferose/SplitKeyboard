@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 Ferose. Fork of CoreKeyboard (Copyright CuboCore Group). -->
+
+<component type="desktop-application">
+    <id>online.ferose.SplitKeyboard</id>
+
+    <metadata_license>CC0-1.0</metadata_license>
+    <project_license>GPL-3.0-or-later</project_license>
+
+    <developer id="online.ferose">
+        <name>Ferose</name>
+    </developer>
+
+    <launchable type="desktop-id">online.ferose.SplitKeyboard.desktop</launchable>
+
+    <name>SplitKeyboard</name>
+    <summary>A split-layout on-screen keyboard for X11 (wide displays / Steam Deck)</summary>
+
+    <description>
+        <p>
+            SplitKeyboard is an X11 on-screen keyboard, a fork of CoreKeyboard, with the keys packed into the left and right quarters of the screen and a see-through, click-through middle. It's built for two-thumb typing on wide displays such as the Steam Deck, and supports multitouch and hybrid (armed / momentary) modifiers.
+        </p>
+        <p>
+            It requires an X11 session (for example the Steam Deck's desktop mode). On Wayland it runs through XWayland but cannot inject keystrokes into native Wayland windows, so it is not intended for Wayland desktops.
+        </p>
+    </description>
+
+    <keywords>
+        <keyword>Virtual Keyboard</keyword>
+        <keyword>On-screen keyboard</keyword>
+        <keyword>Split</keyword>
+        <keyword>Steam Deck</keyword>
+        <keyword>X11</keyword>
+    </keywords>
+
+    <categories>
+        <category>Utility</category>
+        <category>Qt</category>
+        <category>Accessibility</category>
+    </categories>
+
+    <content_rating type="oars-1.1" />
+    <url type="homepage">https://ferose.online/</url>
+    <url type="bugtracker">https://github.com/ferose/SplitKeyboard/issues</url>
+    <url type="vcs-browser">https://github.com/ferose/SplitKeyboard</url>
+
+    <releases>
+        <release version="1.0.0" date="2026-06-07">
+            <description>
+                <p>First release of SplitKeyboard, a split-layout fork of CoreKeyboard for wide displays and the Steam Deck.</p>
+            </description>
+        </release>
+    </releases>
+
+    <screenshots>
+        <screenshot type="default">
+            <caption>SplitKeyboard</caption>
+            <image type="source">https://raw.githubusercontent.com/ferose/SplitKeyboard/v1.0.0/splitkeyboard/screenshot.png</image>
+        </screenshot>
+    </screenshots>
+
+    <supports>
+        <control>pointing</control>
+        <control>keyboard</control>
+        <control>touch</control>
+    </supports>
+</component>
