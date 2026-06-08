@@ -35,8 +35,8 @@ settings::settings()
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)
         + QStringLiteral("/SplitKeyboard");
     QDir().mkpath(dir);
-    defaultSett = dir + "/settings.conf";
-    cSetting = new QSettings(defaultSett, QSettings::NativeFormat);
+    const QString settingsFile = dir + "/settings.conf";
+    cSetting = new QSettings(settingsFile, QSettings::NativeFormat);
 
     setAppDefaultSettings();
 }

@@ -72,7 +72,6 @@ public:
 
 private:
 	QSettings *cSetting;
-	QString defaultSett;
 
     void setAppDefaultSettings();
 };

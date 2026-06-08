@@ -68,10 +68,10 @@ static const unsigned int kHotkeyLockMasks[] = { 0, LockMask, Mod2Mask, LockMask
  * for each bottom dock window, (window height - reserved bottom strut). A non-floating
  * panel reserves exactly its height (gap 0); other desktops have no such dock (gap 0). No
  * plasmashell scripting involved, so this stays Flathub-safe. Returns 0 on any failure. */
-static int bottomPanelFloatGap()
+static int bottomPanelFloatGap(QScreen *screen)
 {
 	auto *x11 = qApp->nativeInterface<QNativeInterface::QX11Application>();
-	if (!x11 || !x11->display()) return 0;
+	if (!x11 || !x11->display() || !screen) return 0;
 	Display *dpy = x11->display();
 	const Window root = DefaultRootWindow(dpy);
 
@@ -81,6 +81,14 @@ static int bottomPanelFloatGap()
 	const Atom aStrutPartial = XInternAtom(dpy, "_NET_WM_STRUT_PARTIAL",     True);
 	const Atom aStrut        = XInternAtom(dpy, "_NET_WM_STRUT",             True);
 	if (aClientList == None || aWindowType == None || aTypeDock == None) return 0;
+
+	// Target screen bounds in physical (native X) pixels: the X11 reads below are physical,
+	// while QScreen::geometry() is logical, so scale by the device pixel ratio. Scoping to
+	// this screen keeps a floating panel on another monitor from inflating the gap.
+	const QRect lg = screen->geometry();
+	const qreal dpr = screen->devicePixelRatio();
+	const QRect scr(qRound(lg.x() * dpr), qRound(lg.y() * dpr),
+	                qRound(lg.width() * dpr), qRound(lg.height() * dpr));
 
 	// The WM-managed window list off the root.
 	Atom type; int fmt; unsigned long count = 0, after = 0; unsigned char *raw = nullptr;
@@ -120,12 +128,17 @@ static int bottomPanelFloatGap()
 		}
 		if (strutBottom <= 0) continue;   // not a bottom-anchored panel
 
-		// Overshoot of the actual window past what it reserves.
+		// Window geometry in physical px. XGetGeometry is parent-relative for managed
+		// windows, so translate (0,0) to root for the absolute position (the height is
+		// parent-independent). Only count a panel whose centre lies on the target screen.
 		Window dummy; int x, y; unsigned int ww, wh, bw, depth;
-		if (XGetGeometry(dpy, w, &dummy, &x, &y, &ww, &wh, &bw, &depth)) {
-			const int over = static_cast<int>(wh) - static_cast<int>(strutBottom);
-			if (over > gap) gap = over;
-		}
+		if (!XGetGeometry(dpy, w, &dummy, &x, &y, &ww, &wh, &bw, &depth)) continue;
+		int absX = 0, absY = 0; Window childDummy;
+		if (!XTranslateCoordinates(dpy, w, root, 0, 0, &absX, &absY, &childDummy)) continue;
+		if (!scr.contains(absX + static_cast<int>(ww) / 2, absY + static_cast<int>(wh) / 2))
+			continue;
+		const int over = static_cast<int>(wh) - static_cast<int>(strutBottom);
+		if (over > gap) gap = over;
 	}
 	XFree(raw);
 	return gap > 0 ? gap : 0;
@@ -773,11 +786,18 @@ void SplitKeyboard::modeCompact()
     QRect avail = screen->availableGeometry();
     // bottomPanelFloatGap() is in physical px (raw X11); avail/move are in logical px, so
     // scale the lift down by the device pixel ratio (a no-op at 100%).
-    const int gap = qRound(bottomPanelFloatGap() / screen->devicePixelRatio());
+    const int gap = qRound(bottomPanelFloatGap(screen) / screen->devicePixelRatio());
 
-    setMinimumSize(avail.width()*0.2, avail.height()*0.15);
-    resize(windowSize);
-    move(avail.x() + avail.width() - width(), avail.y() + avail.height() - height() - gap);
+    // Effective size = the configured window size, clamped up to our minimum. Compute it
+    // here rather than reading width()/height() after the async resize(), so the move()
+    // below places the window correctly on the very first show.
+    const int minW = avail.width()  * 0.2;
+    const int minH = avail.height() * 0.15;
+    const int w = qMax(windowSize.width(),  minW);
+    const int h = qMax(windowSize.height(), minH);
+    setMinimumSize(minW, minH);
+    resize(w, h);
+    move(avail.x() + avail.width() - w, avail.y() + avail.height() - h - gap);
     qApp->processEvents();
 }
 
@@ -790,7 +810,7 @@ void SplitKeyboard::modeFixed()
     QRect avail = screen->availableGeometry();
     // bottomPanelFloatGap() is in physical px (raw X11); avail/setGeometry are in logical
     // px, so scale the lift down by the device pixel ratio (a no-op at 100%).
-    const int gap = qRound(bottomPanelFloatGap() / screen->devicePixelRatio());
+    const int gap = qRound(bottomPanelFloatGap(screen) / screen->devicePixelRatio());
 
     resize(avail.width(), avail.height() * .3);
     setMinimumSize(avail.width(), avail.height() * .3);
