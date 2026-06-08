@@ -68,12 +68,17 @@ flatpak run org.flatpak.Builder --force-clean --user --install \
 
 ## Run
 
+Launch **SplitKeyboard** from your application launcher — it installs like any other app.
+Toggle it from anywhere with `Super+Ctrl+K`, or from the tray icon.
+
+To start it from a terminal instead:
+
 ```sh
 flatpak run online.ferose.SplitKeyboard -platform xcb
 ```
 
-`-platform xcb` forces X11, which the input and window-masking code requires. Or launch
-**SplitKeyboard** from the application menu.
+`-platform xcb` forces X11, which the input and window-masking code requires; the desktop
+launcher already passes it.
 
 > **X11 only.** The keystroke injection (`XTest`) and global hotkey (`XGrabKey`) are X11
 > mechanisms. On a Wayland session the app runs through XWayland but **cannot type into
