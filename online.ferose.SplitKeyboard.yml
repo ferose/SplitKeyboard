@@ -6,12 +6,10 @@ command: splitkeyboard
 
 finish-args:
   - --share=ipc
-  # X11-only app (XTest/XGrabKey input + mask; launcher forces -platform xcb), but the
-  # linter requires fallback-x11 to be paired with wayland -- so on a Wayland session it
-  # runs through xwayland. --device=dri is standard GPU-render access (without it Mesa
-  # fails to init and spams the log on every launch).
+  # X11-only app (XTest/XGrabKey input + mask; launcher forces -platform xcb). On a Wayland
+  # session it runs through xwayland via fallback-x11. --device=dri is standard GPU-render
+  # access (without it Mesa fails to init and spams the log on every launch).
   - --socket=fallback-x11
-  - --socket=wayland
   - --device=dri
   # No host filesystem grant: config lives in the app's own redirected XDG config dir.
   - --talk-name=org.kde.StatusNotifierWatcher
@@ -29,15 +27,11 @@ cleanup:
 modules:
   - name: splitkeyboard
     buildsystem: cmake-ninja
-    # The CMake project lives in the splitkeyboard/ subdir of the repo; build from there.
-    subdir: splitkeyboard
     config-opts:
       - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
     sources:
-      # Our own source (originally forked from CoreKeyboard commit 454e241). The app id,
-      # binary, and metadata are correct in-source -- no post-install re-ID needed.
-      # Pinned to the v1.0.0 tag on the public GitHub repo (Flathub builds from there, not
-      # a local dir). The flathub-repo copy of this manifest can add the exact commit: SHA.
-      - type: git
-        url: https://github.com/ferose/SplitKeyboard.git
-        tag: v1.0.0
+      # Our own source (originally forked from CoreKeyboard commit 454e241), built straight
+      # from the splitkeyboard/ subdir of this repo -- that dir is the CMake project root, so
+      # no `subdir:` is needed. The app id, binary, and metadata are correct in-source.
+      - type: dir
+        path: splitkeyboard

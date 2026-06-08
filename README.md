@@ -43,7 +43,19 @@ R7:  Ctrl  | Super |  Alt  | Space | Space |  Del   ||    \   | Space | Space | 
 
 https://github.com/user-attachments/assets/673ee187-72f1-46f2-9f6a-345a2557da29
 
-## Build
+## Install
+
+A signed flatpak repo is hosted on GitHub Pages — install and auto-update with one command:
+
+```sh
+flatpak install --user https://ferose.github.io/SplitKeyboard/splitkeyboard.flatpakref
+```
+
+It pulls the `org.kde.Platform` runtime from Flathub automatically and updates with the rest
+of your apps (`flatpak update`). Or open the [install page](https://ferose.github.io/SplitKeyboard/)
+and click through. Then see [Run](#run) below.
+
+## Build from source
 
 Requires `org.flatpak.Builder` and `org.kde.Sdk//6.10`.
 
@@ -66,8 +78,7 @@ flatpak run online.ferose.SplitKeyboard -platform xcb
 > **X11 only.** The keystroke injection (`XTest`) and global hotkey (`XGrabKey`) are X11
 > mechanisms. On a Wayland session the app runs through XWayland but **cannot type into
 > native Wayland windows**, so use it on an X11 desktop — e.g. the Steam Deck's desktop
-> mode (KDE Plasma X11). The `--socket=wayland` in the manifest is only there because
-> Flathub's linter requires it alongside `fallback-x11`; the app does not use Wayland.
+> mode (KDE Plasma X11).
 
 ## Configure
 
