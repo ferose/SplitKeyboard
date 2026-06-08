@@ -41,7 +41,7 @@ R7:  Ctrl  | Super |  Alt  | Space | Space |  Del   ||    \   | Space | Space | 
 - **Arrows** form an inline `Lt Dn Up Rt` strip across R2, split by the center hole.
 - All 32 ASCII symbols fit on this one page with **no duplicates** — 11 typed directly, 21 from Shift.
 
-https://github.com/user-attachments/assets/673ee187-72f1-46f2-9f6a-345a2557da29
+https://github.com/user-attachments/assets/e292f76d-704a-4495-a14c-72851088572b
 
 ## Install
 
