@@ -1,0 +1,10 @@
+[Flatpak Ref]
+Name=online.ferose.SplitKeyboard
+Branch=master
+Url=https://ferose.github.io/SplitKeyboard/repo
+Title=SplitKeyboard
+Comment=A split-layout X11 on-screen keyboard for wide displays / the Steam Deck
+Homepage=https://github.com/ferose/SplitKeyboard
+IsRuntime=false
+GPGKey=mDMEaiZj5BYJKwYBBAHaRw8BAQdAwGNPqfuHFxLlZkAa7QIy/iOrB4bXPoZFP9W14+Umh9m0NVNwbGl0S2V5Ym9hcmQgUmVwb3NpdG9yeSAoZmVyb3NlKSA8ZmVyb3NlMkBnbWFpbC5jb20+iJMEExYKADsWIQR9zetT4H2TJRIcg+KSxR99azOz1wUCaiZj5AIbAwULCQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRCSxR99azOz18jyAQCSk8qX7Bg4rzoJiZ5j2DJthUw1V8OAOODrrhgZXiA+1wEA/kBUofqHu27qXKcbVSFH2v8/cQRdVmjqaiBAjxVasQE=
+RuntimeRepo=https://flathub.org/repo/flathub.flatpakrepo

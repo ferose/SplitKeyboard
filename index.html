@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SplitKeyboard — install</title>
+<style>
+  body{font-family:system-ui,sans-serif;max-width:46rem;margin:3rem auto;padding:0 1rem;line-height:1.6;color:#222;background:#fafafa}
+  code,pre{background:#eee;border-radius:6px}
+  code{padding:.1rem .35rem}
+  pre{padding:1rem;overflow:auto}
+  a.btn{display:inline-block;background:#2b6cb0;color:#fff;padding:.6rem 1rem;border-radius:8px;text-decoration:none;font-weight:600}
+  .note{color:#666;font-size:.9rem}
+</style>
+</head>
+<body>
+<h1>SplitKeyboard</h1>
+<p>A split-layout <strong>X11</strong> on-screen keyboard for wide displays / the Steam Deck — a fork of CoreKeyboard with the keys in the left and right quarters and a see-through, click-through middle.</p>
+
+<p><a class="btn" href="splitkeyboard.flatpakref">One-click install (.flatpakref)</a></p>
+
+<h2>Install from the command line</h2>
+<pre><code>flatpak install --user https://ferose.github.io/SplitKeyboard/splitkeyboard.flatpakref</code></pre>
+
+<h2>Run</h2>
+<pre><code>flatpak run online.ferose.SplitKeyboard -platform xcb</code></pre>
+<p class="note">Or launch <strong>SplitKeyboard</strong> from the application menu. Toggle it anywhere with <code>Super+Ctrl+K</code> or the tray icon.</p>
+
+<h2>Updates</h2>
+<p>Once installed it updates with the rest of your apps (<code>flatpak update</code>) or one-by-one:</p>
+<pre><code>flatpak update online.ferose.SplitKeyboard</code></pre>
+
+<p class="note"><strong>X11 only.</strong> The keystroke injection and global hotkey are X11 mechanisms; on a Wayland session it runs via XWayland but can't type into native Wayland windows. Use it on an X11 desktop, e.g. the Steam Deck's desktop mode.</p>
+<p class="note">Source &amp; issues: <a href="https://github.com/ferose/SplitKeyboard">github.com/ferose/SplitKeyboard</a> · GPL-3.0-or-later</p>
+</body>
+</html>
