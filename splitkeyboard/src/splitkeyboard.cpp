@@ -44,7 +44,6 @@
 
 #include <X11/extensions/XTest.h>
 #include <X11/keysym.h>
-#include <X11/Xatom.h>
 #include <xcb/xcb.h>
 
 /* XGrabKey reports a conflicting grab asynchronously as a BadAccess error; swallow just
@@ -60,89 +59,6 @@ static int hotkeyGrabErrorHandler(Display *dpy, XErrorEvent *ev)
 
 /* The lock-modifier combos to also grab under, so Caps/Num Lock don't swallow the hotkey. */
 static const unsigned int kHotkeyLockMasks[] = { 0, LockMask, Mod2Mask, LockMask | Mod2Mask };
-
-/* Floating-panel compensation. A KDE "floating" bottom panel reserves a strut (the band
- * availableGeometry() excludes) that is *shorter* than its actual window, so the panel is
- * drawn taller than it reserves and visually overlaps whatever sits at the available-area
- * bottom edge -- clipping our bottom key row. We measure that overshoot straight off X11:
- * for each bottom dock window, (window height - reserved bottom strut). A non-floating
- * panel reserves exactly its height (gap 0); other desktops have no such dock (gap 0). No
- * plasmashell scripting involved, so this stays Flathub-safe. Returns 0 on any failure. */
-static int bottomPanelFloatGap(QScreen *screen)
-{
-	auto *x11 = qApp->nativeInterface<QNativeInterface::QX11Application>();
-	if (!x11 || !x11->display() || !screen) return 0;
-	Display *dpy = x11->display();
-	const Window root = DefaultRootWindow(dpy);
-
-	const Atom aClientList   = XInternAtom(dpy, "_NET_CLIENT_LIST",          True);
-	const Atom aWindowType   = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE",       True);
-	const Atom aTypeDock     = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK",  True);
-	const Atom aStrutPartial = XInternAtom(dpy, "_NET_WM_STRUT_PARTIAL",     True);
-	const Atom aStrut        = XInternAtom(dpy, "_NET_WM_STRUT",             True);
-	if (aClientList == None || aWindowType == None || aTypeDock == None) return 0;
-
-	// Target screen bounds in physical (native X) pixels: the X11 reads below are physical,
-	// while QScreen::geometry() is logical, so scale by the device pixel ratio. Scoping to
-	// this screen keeps a floating panel on another monitor from inflating the gap.
-	const QRect lg = screen->geometry();
-	const qreal dpr = screen->devicePixelRatio();
-	const QRect scr(qRound(lg.x() * dpr), qRound(lg.y() * dpr),
-	                qRound(lg.width() * dpr), qRound(lg.height() * dpr));
-
-	// The WM-managed window list off the root.
-	Atom type; int fmt; unsigned long count = 0, after = 0; unsigned char *raw = nullptr;
-	if (XGetWindowProperty(dpy, root, aClientList, 0, 1024, False, XA_WINDOW,
-	                       &type, &fmt, &count, &after, &raw) != Success || !raw)
-		return 0;
-	const Window *clients = reinterpret_cast<Window *>(raw);
-
-	int gap = 0;
-	for (unsigned long i = 0; i < count; ++i) {
-		const Window w = clients[i];
-
-		// Keep only windows whose _NET_WM_WINDOW_TYPE contains _NET_WM_WINDOW_TYPE_DOCK.
-		bool isDock = false;
-		{
-			Atom t; int f; unsigned long n = 0, a = 0; unsigned char *td = nullptr;
-			if (XGetWindowProperty(dpy, w, aWindowType, 0, 16, False, XA_ATOM,
-			                       &t, &f, &n, &a, &td) == Success && td) {
-				const Atom *types = reinterpret_cast<Atom *>(td);
-				for (unsigned long j = 0; j < n; ++j)
-					if (types[j] == aTypeDock) { isDock = true; break; }
-				XFree(td);
-			}
-		}
-		if (!isDock) continue;
-
-		// Bottom reserved strut = index 3 of _NET_WM_STRUT_PARTIAL (preferred) or _NET_WM_STRUT.
-		long strutBottom = 0;
-		for (Atom prop : { aStrutPartial, aStrut }) {
-			if (prop == None) continue;
-			Atom t; int f; unsigned long n = 0, a = 0; unsigned char *sd = nullptr;
-			if (XGetWindowProperty(dpy, w, prop, 0, 12, False, XA_CARDINAL,
-			                       &t, &f, &n, &a, &sd) == Success && sd && n >= 4)
-				strutBottom = reinterpret_cast<long *>(sd)[3];
-			if (sd) XFree(sd);
-			if (strutBottom > 0) break;
-		}
-		if (strutBottom <= 0) continue;   // not a bottom-anchored panel
-
-		// Window geometry in physical px. XGetGeometry is parent-relative for managed
-		// windows, so translate (0,0) to root for the absolute position (the height is
-		// parent-independent). Only count a panel whose centre lies on the target screen.
-		Window dummy; int x, y; unsigned int ww, wh, bw, depth;
-		if (!XGetGeometry(dpy, w, &dummy, &x, &y, &ww, &wh, &bw, &depth)) continue;
-		int absX = 0, absY = 0; Window childDummy;
-		if (!XTranslateCoordinates(dpy, w, root, 0, 0, &absX, &absY, &childDummy)) continue;
-		if (!scr.contains(absX + static_cast<int>(ww) / 2, absY + static_cast<int>(wh) / 2))
-			continue;
-		const int over = static_cast<int>(wh) - static_cast<int>(strutBottom);
-		if (over > gap) gap = over;
-	}
-	XFree(raw);
-	return gap > 0 ? gap : 0;
-}
 
 /* --- Visual tuning (SplitKeyboard) ---------------------------------------------------
  * Gaps stay uniform as long as the layout/mask pad equals kKeyInset: the gap between keys
@@ -780,13 +696,10 @@ void SplitKeyboard::toggleShowHide()
 void SplitKeyboard::modeCompact()
 {
     // Anchor to the available area (taskbar excluded) so the floating keyboard's
-    // bottom-right corner sits above the panel, not on top of it. Lift by the
-    // floating-panel overshoot so a KDE floating panel doesn't clip the bottom edge.
+    // bottom-right corner sits above the panel, not on top of it (showEvent un-floats a
+    // KDE panel so it sits flush against this bottom edge).
     QScreen *screen = qApp->primaryScreen();
     QRect avail = screen->availableGeometry();
-    // bottomPanelFloatGap() is in physical px (raw X11); avail/move are in logical px, so
-    // scale the lift down by the device pixel ratio (a no-op at 100%).
-    const int gap = qRound(bottomPanelFloatGap(screen) / screen->devicePixelRatio());
 
     // Effective size = the configured window size, clamped up to our minimum. Compute it
     // here rather than reading width()/height() after the async resize(), so the move()
@@ -797,34 +710,30 @@ void SplitKeyboard::modeCompact()
     const int h = qMax(windowSize.height(), minH);
     setMinimumSize(minW, minH);
     resize(w, h);
-    move(avail.x() + avail.width() - w, avail.y() + avail.height() - h - gap);
+    move(avail.x() + avail.width() - w, avail.y() + avail.height() - h);
     qApp->processEvents();
 }
 
 void SplitKeyboard::modeFixed()
 {
     // Use the available area (panel excluded) so the docked bar's bottom edge sits at the
-    // top of the taskbar rather than under it; lift by the floating-panel overshoot so a
-    // KDE floating panel (drawn taller than it reserves) doesn't clip the bottom key row.
+    // top of the taskbar rather than under it (showEvent un-floats a KDE panel so it sits
+    // flush against that edge rather than overlapping the bottom key row).
     QScreen *screen = qApp->primaryScreen();
     QRect avail = screen->availableGeometry();
-    // bottomPanelFloatGap() is in physical px (raw X11); avail/setGeometry are in logical
-    // px, so scale the lift down by the device pixel ratio (a no-op at 100%).
-    const int gap = qRound(bottomPanelFloatGap(screen) / screen->devicePixelRatio());
 
     resize(avail.width(), avail.height() * .3);
     setMinimumSize(avail.width(), avail.height() * .3);
-    setGeometry(avail.x(), avail.y() + avail.height() * .7 - gap, avail.width(), avail.height() * .3);
+    setGeometry(avail.x(), avail.y() + avail.height() * .7, avail.width(), avail.height() * .3);
     qApp->processEvents();
 }
 
 void SplitKeyboard::setPanelFloating(bool floating)
 {
-	// Plasma exposes a panel's float state only through its scripting bridge, so we
-	// drive it via the org.kde.PlasmaShell.evaluateScript D-Bus call. Fire-and-forget:
-	// if Plasma isn't on the bus (another DE, or it's restarting) this is a no-op. The
-	// Flathub build omits the org.kde.plasmashell talk-name (privileged interface the
-	// linter rejects), so this also no-ops there -- the bottom panel just stays floating.
+	// Plasma exposes a panel's float state only through its scripting bridge, so we drive
+	// it via the org.kde.PlasmaShell.evaluateScript D-Bus call (needs the
+	// org.kde.plasmashell talk-name, granted in the manifest). Fire-and-forget: if Plasma
+	// isn't on the bus (another DE, or it's restarting) this is a harmless no-op.
 	const QString flag = floating ? QStringLiteral("true") : QStringLiteral("false");
 	const QString script = QStringLiteral(
 		"var ps = panels();"

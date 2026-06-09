@@ -13,6 +13,9 @@ finish-args:
   - --device=dri
   # No host filesystem grant: config lives in the app's own redirected XDG config dir.
   - --talk-name=org.kde.StatusNotifierWatcher
+  # Un-float the bottom KDE panel while the keyboard is shown (so it sits flush, not
+  # overlapping the bottom key row) via org.kde.PlasmaShell.evaluateScript; a no-op off KDE.
+  - --talk-name=org.kde.plasmashell
 
 cleanup:
   - /include
