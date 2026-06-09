@@ -45,6 +45,15 @@
     <url type="vcs-browser">https://github.com/ferose/SplitKeyboard</url>
 
     <releases>
+        <release version="1.2.0" date="2026-06-08">
+            <description>
+                <p>Changes in this release:</p>
+                <ul>
+                    <li>New optional "Start on login" toggle in the tray menu. When enabled, SplitKeyboard launches automatically at login, minimized to the tray (show it with the Super+Ctrl+K hotkey or the tray icon).</li>
+                    <li>The keyboard now re-anchors its position and size each time it is shown, so it lands correctly even when started hidden.</li>
+                </ul>
+            </description>
+        </release>
         <release version="1.1.0" date="2026-06-08">
             <description>
                 <p>Changes in this release:</p>

@@ -16,6 +16,9 @@ finish-args:
   # Un-float the bottom KDE panel while the keyboard is shown (so it sits flush, not
   # overlapping the bottom key row) via org.kde.PlasmaShell.evaluateScript; a no-op off KDE.
   - --talk-name=org.kde.plasmashell
+  # "Start on login": write/remove the host XDG autostart .desktop. Narrow grant -- only the
+  # autostart subdir of ~/.config (the app's own config stays in its redirected sandbox dir).
+  - --filesystem=xdg-config/autostart:create
 
 cleanup:
   - /include

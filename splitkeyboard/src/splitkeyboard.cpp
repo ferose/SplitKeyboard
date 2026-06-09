@@ -756,6 +756,15 @@ void SplitKeyboard::showEvent(QShowEvent *event)
 	QWidget::showEvent(event);
 	// Un-float the taskbar so its top edge aligns with our bottom edge (no overlap).
 	setPanelFloating(false);
+	// Re-anchor against the current availableGeometry on every show. This is what makes a
+	// hidden start (the --hidden autostart) safe: geometry is otherwise computed once in
+	// the constructor, and if the app launched before the panel reserved its strut that
+	// stale (full-screen) size would stick. Recomputing here -- by which point the strut is
+	// established -- replaces the removed DaemonMode's broken one-shot detection.
+	if (mMode)
+		modeFixed();
+	else
+		modeCompact();
 }
 
 void SplitKeyboard::hideEvent(QHideEvent *event)
