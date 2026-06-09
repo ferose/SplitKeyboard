@@ -30,6 +30,7 @@
 #include <QPixmap>
 
 #include "splitkeyboard.h"
+#include "autostart.h"
 
 class trayicon : public QSystemTrayIcon {
 	Q_OBJECT
@@ -69,6 +70,18 @@ public:
         /* "\tSuper+Ctrl+K" renders as a right-aligned shortcut hint; it's informational
          * only -- the real toggle is a global XGrabKey, not a Qt action shortcut. */
         menu->addAction(QIcon(), "&Toggle Visible\tSuper+Ctrl+K", this, &trayicon::toggleShowHide);
+
+        /* "Start on login": writes/removes a host XDG autostart .desktop (see autostart.h).
+         * The .desktop's presence is the source of truth, so the check state is read from it
+         * here and re-synced after each toggle in case the write failed. */
+        QAction *autostartAction = menu->addAction("&Start on login");
+        autostartAction->setCheckable(true);
+        autostartAction->setChecked(autostart::isEnabled());
+        connect(autostartAction, &QAction::triggered, this, [autostartAction](bool on) {
+            autostart::setEnabled(on);
+            autostartAction->setChecked(autostart::isEnabled());
+        });
+
 		menu->addSeparator();
 		menu->addAction(QIcon::fromTheme("application-quit"), "&Quit SplitKeyboard", QCoreApplication::instance(), SLOT(quit()));
 

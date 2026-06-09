@@ -18,6 +18,8 @@ Highlights:
 - **Ghosted panel** — semi-transparent, so you can see what's behind it.
 - **Global hotkey** — `Super+Ctrl+K` toggles the keyboard from anywhere; the tray icon and
   re-launching the app do too.
+- **Start on login** — an optional tray toggle; when on, SplitKeyboard launches at login
+  minimized to the tray (show it with the hotkey or tray icon).
 
 ## Layout
 

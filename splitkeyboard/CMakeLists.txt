@@ -1,9 +1,9 @@
 cmake_minimum_required( VERSION 3.16 )
 project( splitkeyboard )
 
-set( PROJECT_VERSION 1.1.0 )
+set( PROJECT_VERSION 1.2.0 )
 set( PROJECT_VERSION_MAJOR 1 )
-set( PROJECT_VERSION_MINOR 1 )
+set( PROJECT_VERSION_MINOR 2 )
 set( PROJECT_VERSION_PATCH 0 )
 
 set( PROJECT_VERSION_MAJOR_MINOR ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR} )
@@ -35,6 +35,7 @@ find_package( Qt6DBus REQUIRED )
 set( SOURCES
     src/main.cpp
     src/trayicon.h
+    src/autostart.h
     src/settings.cpp
     src/settings.h
     src/keyengine.cpp

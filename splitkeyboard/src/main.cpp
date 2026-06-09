@@ -51,6 +51,15 @@ int main(int argc, char **argv)
 {
 	QApplication app(argc, argv);
 
+	/* --hidden: start minimized to the tray instead of showing the keyboard. The "Start
+	   on login" autostart .desktop launches with this so login isn't interrupted by the
+	   keyboard popping up; a manual launch (no flag) still shows immediately. The tray
+	   icon and hotkey grab are set up regardless, so a hidden start stays reachable. */
+	bool startHidden = false;
+	for (int i = 1; i < argc; ++i)
+		if (QString::fromLocal8Bit(argv[i]) == QLatin1String("--hidden"))
+			startHidden = true;
+
 	app.setOrganizationName("ferose.online");
 	app.setApplicationName("SplitKeyboard");
 	app.setApplicationVersion(QStringLiteral(VERSION_TEXT));
@@ -82,7 +91,8 @@ int main(int argc, char **argv)
 		k.toggleShowHide();
 	});
 
-	k.show();
+	if (!startHidden)
+		k.show();
 
 	/* Start the tray icon */
 	trayicon tray(&k);
