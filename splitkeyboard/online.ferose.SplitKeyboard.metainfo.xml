@@ -45,6 +45,16 @@
     <url type="vcs-browser">https://github.com/ferose/SplitKeyboard</url>
 
     <releases>
+        <release version="1.1.0" date="2026-06-08">
+            <description>
+                <p>Changes in this release:</p>
+                <ul>
+                    <li>The bottom KDE panel now un-floats while the keyboard is shown, so it sits flush against the keyboard instead of overlapping the bottom key row; it re-floats when the keyboard is hidden.</li>
+                    <li>Sharper key labels and icons under HiDPI / fractional display scaling.</li>
+                    <li>Fixed the floating window's placement on first show.</li>
+                </ul>
+            </description>
+        </release>
         <release version="1.0.0" date="2026-06-07">
             <description>
                 <p>First release of SplitKeyboard, a split-layout fork of CoreKeyboard for wide displays and the Steam Deck.</p>
@@ -55,7 +65,7 @@
     <screenshots>
         <screenshot type="default">
             <caption>SplitKeyboard</caption>
-            <image type="source">https://raw.githubusercontent.com/ferose/SplitKeyboard/v1.0.0/splitkeyboard/screenshot.png</image>
+            <image type="source">https://raw.githubusercontent.com/ferose/SplitKeyboard/main/splitkeyboard/screenshot.png</image>
         </screenshot>
     </screenshots>
 
