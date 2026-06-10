@@ -39,11 +39,17 @@
 #include "splitkeyboard.h"
 
 #include <QDBusConnection>
+#include <QDBusConnectionInterface>
+#include <QDBusInterface>
 #include <QDBusMessage>
+#include <QDBusReply>
 #include <QSvgRenderer>
+#include <QTimer>
 
 #include <X11/extensions/XTest.h>
+#include <X11/extensions/shape.h>
 #include <X11/keysym.h>
+#include <X11/XKBlib.h>
 #include <xcb/xcb.h>
 
 /* XGrabKey reports a conflicting grab asynchronously as a BadAccess error; swallow just
@@ -55,6 +61,14 @@ static int hotkeyGrabErrorHandler(Display *dpy, XErrorEvent *ev)
 {
 	if (ev->error_code == BadAccess) { sHotkeyGrabFailed = true; return 0; }
 	return sPrevXErrorHandler ? sPrevXErrorHandler(dpy, ev) : 0;
+}
+
+/* The X11 Display, or null when not running on xcb (e.g. a Wayland session launched without
+ * -platform xcb -- the platform interface is then null and dereferencing it would crash). */
+static Display *x11Display()
+{
+	auto *x11 = qApp->nativeInterface<QNativeInterface::QX11Application>();
+	return x11 ? x11->display() : nullptr;
 }
 
 /* The lock-modifier combos to also grab under, so Caps/Num Lock don't swallow the hotkey. */
@@ -82,12 +96,9 @@ SplitKeyboard::SplitKeyboard() : QWidget()
 	loadKeymap();
 	relayKeyboard();
 
-	/* Route the engine's synthesized key events to X11. Guard the platform interface:
-	   it is null when the app wasn't started on xcb (e.g. a Wayland session launched
-	   without -platform xcb), and dereferencing it would crash on startup. */
-	if (auto *x11 = qApp->nativeInterface<QNativeInterface::QX11Application>())
+	/* Route the engine's synthesized key events to X11 (no-op off xcb -- see x11Display). */
+	if (Display *display = x11Display())
 	{
-		Display *display = x11->display();
 		engine.setSink([display](int keycode, bool down) {
 			XTestFakeKeyEvent(display, keycode, down, 0);
 		});
@@ -97,9 +108,9 @@ SplitKeyboard::SplitKeyboard() : QWidget()
 		qWarning() << "SplitKeyboard: not running on X11 (xcb); key injection disabled. Launch with -platform xcb.";
 	}
 
-	/* Global show/hide hotkey (Super+Ctrl+K), grabbed on the X11 root window. */
+	/* Global show/hide hotkey (Super+K): KGlobalAccel on KDE, else an X11 root grab. The
+	   nativeEventFilter is installed only by the X11-grab path (registerGlobalHotkey). */
 	registerGlobalHotkey();
-	qApp->installNativeEventFilter(this);
 
     mFont = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
 
@@ -156,41 +167,118 @@ SplitKeyboard::~SplitKeyboard()
 {
 	if (mHotkeyKeycode)
 	{
-		auto *x11 = qApp->nativeInterface<QNativeInterface::QX11Application>();
-		if (Display *display = x11 ? x11->display() : nullptr)
+		if (Display *display = x11Display())
 		{
 			Window root = DefaultRootWindow(display);
 			for (unsigned int lock : kHotkeyLockMasks)
 				XUngrabKey(display, mHotkeyKeycode, mHotkeyMods | lock, root);
 		}
 	}
-	qApp->removeNativeEventFilter(this);
+	qApp->removeNativeEventFilter(this);   /* harmless if the X11-grab path never installed it */
 	delete smi;
+}
+
+/* Register Super+K with KDE's global-shortcut daemon (KGlobalAccel) over D-Bus. Unlike a
+ * raw X11 XGrabKey, a KGlobalAccel shortcut is honored by KWin no matter which window has
+ * focus -- including native Wayland windows. That's the whole fix for the flaky hotkey
+ * under Xwayland: the X11 grab is only delivered to us while an X11 window is focused, so
+ * with a Wayland window focused the keypress fell through and typed a bare 'k'. (On KDE
+ * X11 this path also sidesteps the active-grab side effect that closed the Kickoff menu.)
+ * Returns false when KGlobalAccel isn't on the session bus -- i.e. not a KDE session -- so
+ * registerGlobalHotkey() falls back to the X11 root grab. */
+bool SplitKeyboard::registerKGlobalAccelHotkey()
+{
+	QDBusConnection bus = QDBusConnection::sessionBus();
+	if (!bus.isConnected())
+		return false;
+	QDBusConnectionInterface *dbus = bus.interface();
+	if (!dbus || !dbus->isServiceRegistered(QStringLiteral("org.kde.kglobalaccel")))
+		return false;
+
+	/* KGlobalAccel's actionId is a 4-tuple {componentUnique, actionUnique,
+	 * componentFriendly, actionFriendly}. componentUnique becomes the object path
+	 * /component/<name> that carries the globalShortcutPressed signal, so keep it a plain
+	 * alnum token ("splitkeyboard" -> /component/splitkeyboard). */
+	const QStringList actionId = {
+		QStringLiteral("splitkeyboard"), QStringLiteral("toggle"),
+		QStringLiteral("SplitKeyboard"), QStringLiteral("Toggle keyboard")
+	};
+
+	QDBusInterface kga(QStringLiteral("org.kde.kglobalaccel"),
+	                   QStringLiteral("/kglobalaccel"),
+	                   QStringLiteral("org.kde.KGlobalAccel"), bus);
+	if (!kga.isValid())
+		return false;
+
+	/* doRegister creates the action (and loads any saved, possibly user-rebound, keys for
+	 * it from kglobalshortcutsrc). */
+	kga.call(QStringLiteral("doRegister"), actionId);
+
+	/* Assign our default Super+K only if nothing is bound yet -- if the user rebound it in
+	 * System Settings, respect that. Qt's combined key int: Qt::MetaModifier (Super) | K. */
+	const int metaK = int(Qt::MetaModifier) | int(Qt::Key_K);
+	QDBusReply<QList<int>> current = kga.call(QStringLiteral("shortcut"), actionId);
+	if (!current.isValid() || current.value().isEmpty())
+	{
+		/* KGlobalAccel::SetShortcutFlag::SetPresent (== 2): make these keys the active
+		 * shortcut. Passed as uint to match the method's 'u' flags argument. */
+		kga.call(QStringLiteral("setShortcut"), actionId,
+		         QVariant::fromValue(QList<int>{ metaK }),
+		         QVariant::fromValue<uint>(2));
+	}
+
+	/* The daemon emits globalShortcutPressed on the component object when the key fires;
+	 * route it straight to toggleShowHide() (Qt drops the signal's extra args). This is the
+	 * only action in the component, so every emission is ours -- no filtering needed. */
+	const bool ok = bus.connect(
+		QStringLiteral("org.kde.kglobalaccel"),
+		QStringLiteral("/component/splitkeyboard"),
+		QStringLiteral("org.kde.kglobalaccel.Component"),
+		QStringLiteral("globalShortcutPressed"),
+		this, SLOT(toggleShowHide()));
+	if (!ok)
+	{
+		qWarning() << "SplitKeyboard: KGlobalAccel registered but signal connect failed; falling back to X11 grab.";
+		return false;
+	}
+
+	return true;
 }
 
 void SplitKeyboard::registerGlobalHotkey()
 {
-	// Guard the platform interface: it's null when not running on xcb (e.g. a Wayland
-	// session launched without -platform xcb), and dereferencing it would crash on startup.
-	auto *x11 = qApp->nativeInterface<QNativeInterface::QX11Application>();
-	if (!x11)
+	/* Prefer KDE's KGlobalAccel (the only reliable path under Wayland). Only fall back to
+	 * a raw X11 root grab when it's unavailable -- i.e. a non-KDE session. */
+	if (registerKGlobalAccelHotkey())
 		return;
-	Display *display = x11->display();
+
+	Display *display = x11Display();   // null off xcb -- no root to grab on
 	if (!display)
 		return;
 
+	/* This X11-grab backend is the only one that needs the raw-event filter (to edge-detect
+	   the grabbed key); the KGlobalAccel path above returned already, so install it here. */
+	qApp->installNativeEventFilter(this);
+
 	mHotkeyKeycode = XKeysymToKeycode(display, XK_k);
-	/* Super+Ctrl (avoid Super+Alt+K -- that's KDE's default "Switch Keyboard Layout").
+	/* Super+K. The active grab on K swallows the keypress, so it won't also type a 'k'.
 	 * KNOWN ISSUE: toggling the keyboard while the KDE start menu (Kickoff) is open
 	 * closes the menu. We isolated it to the XGrabKey *grab firing* (show(), the dock
 	 * map, and the panel-float toggle were each ruled out -- the menu survives those;
 	 * and it survives the keypress when the grab is absent). The exact mechanism is
 	 * NOT confirmed -- candidates are the active grab's FocusOut vs. KWin reacting to
-	 * the Super key -- and the combo choice doesn't fix it. Likely fix: detect the
-	 * hotkey without grabbing (e.g. XInput2 monitoring); left as follow-up. */
-	mHotkeyMods    = Mod4Mask | ControlMask;      /* Super+Ctrl */
+	 * the Super key. Likely fix: detect the hotkey without grabbing (e.g. XInput2
+	 * monitoring); left as follow-up. */
+	mHotkeyMods    = Mod4Mask;      /* Super */
 	if (mHotkeyKeycode == 0)
 		return;
+
+	/* Detectable auto-repeat: without it, X synthesizes a KeyRelease before each repeat
+	 * KeyPress, so a held hotkey looks like a stream of fresh taps and toggles rapidly
+	 * (very visible under Xwayland). With it on, auto-repeat is repeated KeyPress with NO
+	 * intervening release -- which the edge-detect in nativeEventFilter (mHotkeyDown)
+	 * swallows. This is a per-display client setting; harmless to set unconditionally. */
+	XkbSetDetectableAutoRepeat(display, True, nullptr);
 
 	Window root = DefaultRootWindow(display);
 	sHotkeyGrabFailed  = false;
@@ -202,7 +290,7 @@ void SplitKeyboard::registerGlobalHotkey()
 	XSetErrorHandler(sPrevXErrorHandler);
 
 	if (sHotkeyGrabFailed)
-		qWarning() << "SplitKeyboard: Super+Ctrl+K is already grabbed by another app; toggle hotkey disabled.";
+		qWarning() << "SplitKeyboard: Super+K is already grabbed by another app; toggle hotkey disabled.";
 }
 
 bool SplitKeyboard::nativeEventFilter(const QByteArray &eventType, void *message, qintptr *)
@@ -211,18 +299,36 @@ bool SplitKeyboard::nativeEventFilter(const QByteArray &eventType, void *message
 		return false;
 
 	auto *generic = static_cast<xcb_generic_event_t *>(message);
-	if ((generic->response_type & ~0x80) != XCB_KEY_PRESS)
+	const uint8_t type = generic->response_type & ~0x80;
+	if (type != XCB_KEY_PRESS && type != XCB_KEY_RELEASE)
 		return false;
 
+	/* xcb_key_release_event_t is layout-identical to the press event. */
 	auto *key = reinterpret_cast<xcb_key_press_event_t *>(generic);
-	/* Match the keycode and exactly Super, ignoring lock modifiers (Caps/Num/Scroll). */
-	const unsigned int relevant = ShiftMask | ControlMask | Mod1Mask | Mod4Mask;
-	if (key->detail == mHotkeyKeycode && (key->state & relevant) == mHotkeyMods)
+	if (key->detail != mHotkeyKeycode)
+		return false;
+
+	/* A KeyRelease for our key clears the held state so the next press is a fresh edge. */
+	if (type == XCB_KEY_RELEASE)
 	{
-		toggleShowHide();
-		return true;
+		mHotkeyDown = false;
+		return false;   /* don't consume releases -- only the grab's press is ours */
 	}
-	return false;
+
+	/* Match exactly Super, ignoring lock modifiers (Caps/Num/Scroll). */
+	const unsigned int relevant = ShiftMask | ControlMask | Mod1Mask | Mod4Mask;
+	if ((key->state & relevant) != mHotkeyMods)
+		return false;
+
+	/* Edge-trigger: toggle only on the first press, swallow auto-repeat while held.
+	 * (Detectable auto-repeat keeps the key "down" between repeats, so mHotkeyDown
+	 * stays true and no extra toggles fire until a real KeyRelease.) */
+	if (!mHotkeyDown)
+	{
+		mHotkeyDown = true;
+		toggleShowHide();
+	}
+	return true;
 }
 
 
@@ -402,9 +508,66 @@ void SplitKeyboard::relayKeyboard()
 	if (!leftBox.isNull())  mask += leftBox.adjusted(-pad, -pad, pad, pad).toAlignedRect();
 	if (!rightBox.isNull()) mask += rightBox.adjusted(-pad, -pad, pad, pad).toAlignedRect();
 	if (!mask.isEmpty())
+	{
 		setMask(mask);
+		setInputShape(mask);
+	}
 
 	repaint();
+}
+
+
+/* setMask() sets only the X11 *bounding* shape -- it cuts the middle out visually, but on
+ * rootless Xwayland (KWin) the Wayland surface's input region is built from the X11 *input*
+ * shape, which defaults to the whole window when unset. So without this the gap looks
+ * see-through yet still swallows clicks. Mirror the mask into ShapeInput so the hole is
+ * genuinely click-/touch-through. Native X11 honors this too (it's a no-op-safe addition).
+ *
+ * Qt clobbers the input shape twice, both *after* this call: it recreates the native window
+ * when it applies the dock/translucent flags, and it resets the new window's input region to
+ * the whole window as it finishes showing it. Both land later than the next event-loop pass,
+ * so re-assert at staggered delays out to a few seconds; whichever fire lands after Qt's last
+ * reset is the final writer and sticks. (The delays are empirically tuned -- there's no public
+ * "input region settled" signal to key off -- so don't trim them.) */
+void SplitKeyboard::setInputShape(const QRegion &region)
+{
+	mInputShape = region;
+	reapplyInputShape();
+	for (int ms : {0, 80, 200, 500, 1000, 2000, 3500})
+		QTimer::singleShot(ms, this, &SplitKeyboard::reapplyInputShape);
+}
+
+void SplitKeyboard::reapplyInputShape()
+{
+	Display *display = x11Display();
+	if (!display || mInputShape.isEmpty())
+		return;
+
+	/* Target windowHandle()->winId(), NOT QWidget::winId(). Qt recreates the platform window
+	 * when it applies the dock/translucent flags, but QWidget::winId()/internalWinId() keep
+	 * returning the *old, destroyed* id -- so shaping winId() hits a dead window (the input
+	 * shape silently never applied, which is why the gap stayed click-grabbing). windowHandle()
+	 * tracks the live window. Qt re-applies its own setMask (bounding) there but not our manual
+	 * ShapeInput, so we re-assert it here. */
+	QWindow *wh = windowHandle();
+	if (!wh)
+		return;
+	Window xwin = static_cast<Window>(wh->winId());
+
+	QVector<XRectangle> rects;
+	rects.reserve(mInputShape.rectCount());
+	for (const QRect &r : mInputShape)
+		rects.append(XRectangle{
+			static_cast<short>(r.x()),      static_cast<short>(r.y()),
+			static_cast<unsigned short>(r.width()), static_cast<unsigned short>(r.height())});
+
+	XShapeCombineRectangles(display, xwin, ShapeInput, 0, 0,
+	                        rects.data(), rects.size(), ShapeSet, Unsorted);
+
+	/* Flush the Xlib output buffer: this is a raw Xlib request on the QX11Application Display,
+	 * whose buffer Qt never flushes on its own (Qt drives the window through xcb). XFlush (no
+	 * server round-trip) is enough -- it's a one-way request and nothing reads the shape back. */
+	XFlush(display);
 }
 
 
@@ -467,6 +630,16 @@ bool SplitKeyboard::event(QEvent *e)
 	case QEvent::TouchEnd:
 		handleTouch(static_cast<QTouchEvent *>(e));
 		return true;
+
+	case QEvent::WinIdChange:
+		/* Defensive: re-assert the input shape if Qt surfaces a native-window recreation as
+		 * a WinIdChange. In practice the dock recreation under KWin does NOT fire this (winId()
+		 * stays stale through it -- which is why reapplyInputShape() targets windowHandle(), and
+		 * the staggered reapply is what actually recovers the new window). Harmless if it never
+		 * fires; a real win-id change on another Qt/compositor would be caught here. */
+		if (!mInputShape.isEmpty())
+			setInputShape(mInputShape);
+		return QWidget::event(e);
 
 	default:
 		return QWidget::event(e);

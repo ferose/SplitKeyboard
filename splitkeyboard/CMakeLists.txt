@@ -1,9 +1,9 @@
 cmake_minimum_required( VERSION 3.16 )
 project( splitkeyboard )
 
-set( PROJECT_VERSION 1.2.0 )
+set( PROJECT_VERSION 1.3.0 )
 set( PROJECT_VERSION_MAJOR 1 )
-set( PROJECT_VERSION_MINOR 2 )
+set( PROJECT_VERSION_MINOR 3 )
 set( PROJECT_VERSION_PATCH 0 )
 
 set( PROJECT_VERSION_MAJOR_MINOR ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR} )
@@ -49,7 +49,7 @@ set ( RSCS
 )
 
 add_executable( splitkeyboard ${SOURCES} ${RSCS} )
-target_link_libraries ( splitkeyboard  Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Svg Qt6::DBus X11 Xtst xcb )
+target_link_libraries ( splitkeyboard  Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Svg Qt6::DBus X11 Xtst Xext xcb )
 
 install( TARGETS splitkeyboard DESTINATION bin )
 install( FILES ${APP_ID}.desktop DESTINATION share/applications )
