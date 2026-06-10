@@ -63,6 +63,14 @@ static int hotkeyGrabErrorHandler(Display *dpy, XErrorEvent *ev)
 	return sPrevXErrorHandler ? sPrevXErrorHandler(dpy, ev) : 0;
 }
 
+/* The X11 Display, or null when not running on xcb (e.g. a Wayland session launched without
+ * -platform xcb -- the platform interface is then null and dereferencing it would crash). */
+static Display *x11Display()
+{
+	auto *x11 = qApp->nativeInterface<QNativeInterface::QX11Application>();
+	return x11 ? x11->display() : nullptr;
+}
+
 /* The lock-modifier combos to also grab under, so Caps/Num Lock don't swallow the hotkey. */
 static const unsigned int kHotkeyLockMasks[] = { 0, LockMask, Mod2Mask, LockMask | Mod2Mask };
 
@@ -88,12 +96,9 @@ SplitKeyboard::SplitKeyboard() : QWidget()
 	loadKeymap();
 	relayKeyboard();
 
-	/* Route the engine's synthesized key events to X11. Guard the platform interface:
-	   it is null when the app wasn't started on xcb (e.g. a Wayland session launched
-	   without -platform xcb), and dereferencing it would crash on startup. */
-	if (auto *x11 = qApp->nativeInterface<QNativeInterface::QX11Application>())
+	/* Route the engine's synthesized key events to X11 (no-op off xcb -- see x11Display). */
+	if (Display *display = x11Display())
 	{
-		Display *display = x11->display();
 		engine.setSink([display](int keycode, bool down) {
 			XTestFakeKeyEvent(display, keycode, down, 0);
 		});
@@ -103,9 +108,9 @@ SplitKeyboard::SplitKeyboard() : QWidget()
 		qWarning() << "SplitKeyboard: not running on X11 (xcb); key injection disabled. Launch with -platform xcb.";
 	}
 
-	/* Global show/hide hotkey (Super+K): KGlobalAccel on KDE, else an X11 root grab. */
+	/* Global show/hide hotkey (Super+K): KGlobalAccel on KDE, else an X11 root grab. The
+	   nativeEventFilter is installed only by the X11-grab path (registerGlobalHotkey). */
 	registerGlobalHotkey();
-	qApp->installNativeEventFilter(this);
 
     mFont = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
 
@@ -162,15 +167,14 @@ SplitKeyboard::~SplitKeyboard()
 {
 	if (mHotkeyKeycode)
 	{
-		auto *x11 = qApp->nativeInterface<QNativeInterface::QX11Application>();
-		if (Display *display = x11 ? x11->display() : nullptr)
+		if (Display *display = x11Display())
 		{
 			Window root = DefaultRootWindow(display);
 			for (unsigned int lock : kHotkeyLockMasks)
 				XUngrabKey(display, mHotkeyKeycode, mHotkeyMods | lock, root);
 		}
 	}
-	qApp->removeNativeEventFilter(this);
+	qApp->removeNativeEventFilter(this);   /* harmless if the X11-grab path never installed it */
 	delete smi;
 }
 
@@ -248,14 +252,13 @@ void SplitKeyboard::registerGlobalHotkey()
 	if (registerKGlobalAccelHotkey())
 		return;
 
-	// Guard the platform interface: it's null when not running on xcb (e.g. a Wayland
-	// session launched without -platform xcb), and dereferencing it would crash on startup.
-	auto *x11 = qApp->nativeInterface<QNativeInterface::QX11Application>();
-	if (!x11)
-		return;
-	Display *display = x11->display();
+	Display *display = x11Display();   // null off xcb -- no root to grab on
 	if (!display)
 		return;
+
+	/* This X11-grab backend is the only one that needs the raw-event filter (to edge-detect
+	   the grabbed key); the KGlobalAccel path above returned already, so install it here. */
+	qApp->installNativeEventFilter(this);
 
 	mHotkeyKeycode = XKeysymToKeycode(display, XK_k);
 	/* Super+K. The active grab on K swallows the keypress, so it won't also type a 'k'.
@@ -518,23 +521,17 @@ void SplitKeyboard::relayKeyboard()
  * rootless Xwayland (KWin) the Wayland surface's input region is built from the X11 *input*
  * shape, which defaults to the whole window when unset. So without this the gap looks
  * see-through yet still swallows clicks. Mirror the mask into ShapeInput so the hole is
- * genuinely click-/touch-through. Native X11 honors this too (it's a no-op-safe addition). */
+ * genuinely click-/touch-through. Native X11 honors this too (it's a no-op-safe addition).
+ *
+ * Qt clobbers the input shape twice, both *after* this call: it recreates the native window
+ * when it applies the dock/translucent flags, and it resets the new window's input region to
+ * the whole window as it finishes showing it. Both land later than the next event-loop pass,
+ * so re-assert at staggered delays out to a few seconds; whichever fire lands after Qt's last
+ * reset is the final writer and sticks. (The delays are empirically tuned -- there's no public
+ * "input region settled" signal to key off -- so don't trim them.) */
 void SplitKeyboard::setInputShape(const QRegion &region)
 {
 	mInputShape = region;
-	scheduleInputShapeReapply();
-}
-
-/* The input shape gets clobbered two ways, both *after* a setInputShape() call:
- *  - Qt recreates the native window when it applies the dock/translucent flags, so our shape
- *    lands on the soon-to-be-destroyed old winId() (see the WinIdChange handler in event(),
- *    which re-schedules this for the new window); and
- *  - Qt resets the new window's input region to the whole window as it finishes showing it.
- * Both land later than the next event-loop pass, so re-assert at staggered delays; whichever
- * fires after Qt's last reset is the final writer and sticks. Without this the gap looks
- * see-through (setMask's bounding shape) but still grabs every click. */
-void SplitKeyboard::scheduleInputShapeReapply()
-{
 	reapplyInputShape();
 	for (int ms : {0, 80, 200, 500, 1000, 2000, 3500})
 		QTimer::singleShot(ms, this, &SplitKeyboard::reapplyInputShape);
@@ -542,10 +539,7 @@ void SplitKeyboard::scheduleInputShapeReapply()
 
 void SplitKeyboard::reapplyInputShape()
 {
-	auto *x11 = qApp->nativeInterface<QNativeInterface::QX11Application>();
-	if (!x11)
-		return;                          // not on xcb -- no X11 shape to set
-	Display *display = x11->display();
+	Display *display = x11Display();
 	if (!display || mInputShape.isEmpty())
 		return;
 
@@ -571,9 +565,9 @@ void SplitKeyboard::reapplyInputShape()
 	                        rects.data(), rects.size(), ShapeSet, Unsorted);
 
 	/* Flush the Xlib output buffer: this is a raw Xlib request on the QX11Application Display,
-	 * whose buffer Qt never flushes on its own (Qt drives the window through xcb). XSync also
-	 * makes the change take effect synchronously. */
-	XSync(display, False);
+	 * whose buffer Qt never flushes on its own (Qt drives the window through xcb). XFlush (no
+	 * server round-trip) is enough -- it's a one-way request and nothing reads the shape back. */
+	XFlush(display);
 }
 
 
@@ -638,12 +632,13 @@ bool SplitKeyboard::event(QEvent *e)
 		return true;
 
 	case QEvent::WinIdChange:
-		/* Qt recreated the native window (applying the dock/translucent flags); our input
-		 * shape lived on the old, now-destroyed window. Re-apply it to the new winId() --
-		 * Qt re-applies its own setMask (bounding shape) on recreation, but not our manual
-		 * ShapeInput, so the click-through hole would otherwise be lost. */
+		/* Defensive: re-assert the input shape if Qt surfaces a native-window recreation as
+		 * a WinIdChange. In practice the dock recreation under KWin does NOT fire this (winId()
+		 * stays stale through it -- which is why reapplyInputShape() targets windowHandle(), and
+		 * the staggered reapply is what actually recovers the new window). Harmless if it never
+		 * fires; a real win-id change on another Qt/compositor would be caught here. */
 		if (!mInputShape.isEmpty())
-			scheduleInputShapeReapply();
+			setInputShape(mInputShape);
 		return QWidget::event(e);
 
 	default:
