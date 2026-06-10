@@ -39,11 +39,16 @@
 #include "splitkeyboard.h"
 
 #include <QDBusConnection>
+#include <QDBusConnectionInterface>
+#include <QDBusInterface>
 #include <QDBusMessage>
+#include <QDBusReply>
 #include <QSvgRenderer>
 
 #include <X11/extensions/XTest.h>
+#include <X11/extensions/shape.h>
 #include <X11/keysym.h>
+#include <X11/XKBlib.h>
 #include <xcb/xcb.h>
 
 /* XGrabKey reports a conflicting grab asynchronously as a BadAccess error; swallow just
@@ -168,8 +173,80 @@ SplitKeyboard::~SplitKeyboard()
 	delete smi;
 }
 
+/* Register Super+K with KDE's global-shortcut daemon (KGlobalAccel) over D-Bus. Unlike a
+ * raw X11 XGrabKey, a KGlobalAccel shortcut is honored by KWin no matter which window has
+ * focus -- including native Wayland windows. That's the whole fix for the flaky hotkey
+ * under Xwayland: the X11 grab is only delivered to us while an X11 window is focused, so
+ * with a Wayland window focused the keypress fell through and typed a bare 'k'. (On KDE
+ * X11 this path also sidesteps the active-grab side effect that closed the Kickoff menu.)
+ * Returns false when KGlobalAccel isn't on the session bus -- i.e. not a KDE session -- so
+ * registerGlobalHotkey() falls back to the X11 root grab. */
+bool SplitKeyboard::registerKGlobalAccelHotkey()
+{
+	QDBusConnection bus = QDBusConnection::sessionBus();
+	if (!bus.isConnected())
+		return false;
+	QDBusConnectionInterface *dbus = bus.interface();
+	if (!dbus || !dbus->isServiceRegistered(QStringLiteral("org.kde.kglobalaccel")))
+		return false;
+
+	/* KGlobalAccel's actionId is a 4-tuple {componentUnique, actionUnique,
+	 * componentFriendly, actionFriendly}. componentUnique becomes the object path
+	 * /component/<name> that carries the globalShortcutPressed signal, so keep it a plain
+	 * alnum token ("splitkeyboard" -> /component/splitkeyboard). */
+	const QStringList actionId = {
+		QStringLiteral("splitkeyboard"), QStringLiteral("toggle"),
+		QStringLiteral("SplitKeyboard"), QStringLiteral("Toggle keyboard")
+	};
+
+	QDBusInterface kga(QStringLiteral("org.kde.kglobalaccel"),
+	                   QStringLiteral("/kglobalaccel"),
+	                   QStringLiteral("org.kde.KGlobalAccel"), bus);
+	if (!kga.isValid())
+		return false;
+
+	/* doRegister creates the action (and loads any saved, possibly user-rebound, keys for
+	 * it from kglobalshortcutsrc). */
+	kga.call(QStringLiteral("doRegister"), actionId);
+
+	/* Assign our default Super+K only if nothing is bound yet -- if the user rebound it in
+	 * System Settings, respect that. Qt's combined key int: Qt::MetaModifier (Super) | K. */
+	const int metaK = int(Qt::MetaModifier) | int(Qt::Key_K);
+	QDBusReply<QList<int>> current = kga.call(QStringLiteral("shortcut"), actionId);
+	if (!current.isValid() || current.value().isEmpty())
+	{
+		/* KGlobalAccel::SetShortcutFlag::SetPresent (== 2): make these keys the active
+		 * shortcut. Passed as uint to match the method's 'u' flags argument. */
+		kga.call(QStringLiteral("setShortcut"), actionId,
+		         QVariant::fromValue(QList<int>{ metaK }),
+		         QVariant::fromValue<uint>(2));
+	}
+
+	/* The daemon emits globalShortcutPressed on the component object when the key fires;
+	 * route it straight to toggleShowHide() (Qt drops the signal's extra args). This is the
+	 * only action in the component, so every emission is ours -- no filtering needed. */
+	const bool ok = bus.connect(
+		QStringLiteral("org.kde.kglobalaccel"),
+		QStringLiteral("/component/splitkeyboard"),
+		QStringLiteral("org.kde.kglobalaccel.Component"),
+		QStringLiteral("globalShortcutPressed"),
+		this, SLOT(toggleShowHide()));
+	if (!ok)
+	{
+		qWarning() << "SplitKeyboard: KGlobalAccel registered but signal connect failed; falling back to X11 grab.";
+		return false;
+	}
+
+	return true;
+}
+
 void SplitKeyboard::registerGlobalHotkey()
 {
+	/* Prefer KDE's KGlobalAccel (the only reliable path under Wayland). Only fall back to
+	 * a raw X11 root grab when it's unavailable -- i.e. a non-KDE session. */
+	if (registerKGlobalAccelHotkey())
+		return;
+
 	// Guard the platform interface: it's null when not running on xcb (e.g. a Wayland
 	// session launched without -platform xcb), and dereferencing it would crash on startup.
 	auto *x11 = qApp->nativeInterface<QNativeInterface::QX11Application>();
@@ -180,17 +257,24 @@ void SplitKeyboard::registerGlobalHotkey()
 		return;
 
 	mHotkeyKeycode = XKeysymToKeycode(display, XK_k);
-	/* Super+Ctrl (avoid Super+Alt+K -- that's KDE's default "Switch Keyboard Layout").
+	/* Super+K. The active grab on K swallows the keypress, so it won't also type a 'k'.
 	 * KNOWN ISSUE: toggling the keyboard while the KDE start menu (Kickoff) is open
 	 * closes the menu. We isolated it to the XGrabKey *grab firing* (show(), the dock
 	 * map, and the panel-float toggle were each ruled out -- the menu survives those;
 	 * and it survives the keypress when the grab is absent). The exact mechanism is
 	 * NOT confirmed -- candidates are the active grab's FocusOut vs. KWin reacting to
-	 * the Super key -- and the combo choice doesn't fix it. Likely fix: detect the
-	 * hotkey without grabbing (e.g. XInput2 monitoring); left as follow-up. */
-	mHotkeyMods    = Mod4Mask | ControlMask;      /* Super+Ctrl */
+	 * the Super key. Likely fix: detect the hotkey without grabbing (e.g. XInput2
+	 * monitoring); left as follow-up. */
+	mHotkeyMods    = Mod4Mask;      /* Super */
 	if (mHotkeyKeycode == 0)
 		return;
+
+	/* Detectable auto-repeat: without it, X synthesizes a KeyRelease before each repeat
+	 * KeyPress, so a held hotkey looks like a stream of fresh taps and toggles rapidly
+	 * (very visible under Xwayland). With it on, auto-repeat is repeated KeyPress with NO
+	 * intervening release -- which the edge-detect in nativeEventFilter (mHotkeyDown)
+	 * swallows. This is a per-display client setting; harmless to set unconditionally. */
+	XkbSetDetectableAutoRepeat(display, True, nullptr);
 
 	Window root = DefaultRootWindow(display);
 	sHotkeyGrabFailed  = false;
@@ -211,18 +295,36 @@ bool SplitKeyboard::nativeEventFilter(const QByteArray &eventType, void *message
 		return false;
 
 	auto *generic = static_cast<xcb_generic_event_t *>(message);
-	if ((generic->response_type & ~0x80) != XCB_KEY_PRESS)
+	const uint8_t type = generic->response_type & ~0x80;
+	if (type != XCB_KEY_PRESS && type != XCB_KEY_RELEASE)
 		return false;
 
+	/* xcb_key_release_event_t is layout-identical to the press event. */
 	auto *key = reinterpret_cast<xcb_key_press_event_t *>(generic);
-	/* Match the keycode and exactly Super, ignoring lock modifiers (Caps/Num/Scroll). */
-	const unsigned int relevant = ShiftMask | ControlMask | Mod1Mask | Mod4Mask;
-	if (key->detail == mHotkeyKeycode && (key->state & relevant) == mHotkeyMods)
+	if (key->detail != mHotkeyKeycode)
+		return false;
+
+	/* A KeyRelease for our key clears the held state so the next press is a fresh edge. */
+	if (type == XCB_KEY_RELEASE)
 	{
-		toggleShowHide();
-		return true;
+		mHotkeyDown = false;
+		return false;   /* don't consume releases -- only the grab's press is ours */
 	}
-	return false;
+
+	/* Match exactly Super, ignoring lock modifiers (Caps/Num/Scroll). */
+	const unsigned int relevant = ShiftMask | ControlMask | Mod1Mask | Mod4Mask;
+	if ((key->state & relevant) != mHotkeyMods)
+		return false;
+
+	/* Edge-trigger: toggle only on the first press, swallow auto-repeat while held.
+	 * (Detectable auto-repeat keeps the key "down" between repeats, so mHotkeyDown
+	 * stays true and no extra toggles fire until a real KeyRelease.) */
+	if (!mHotkeyDown)
+	{
+		mHotkeyDown = true;
+		toggleShowHide();
+	}
+	return true;
 }
 
 
@@ -402,9 +504,38 @@ void SplitKeyboard::relayKeyboard()
 	if (!leftBox.isNull())  mask += leftBox.adjusted(-pad, -pad, pad, pad).toAlignedRect();
 	if (!rightBox.isNull()) mask += rightBox.adjusted(-pad, -pad, pad, pad).toAlignedRect();
 	if (!mask.isEmpty())
+	{
 		setMask(mask);
+		setInputShape(mask);
+	}
 
 	repaint();
+}
+
+
+/* setMask() sets only the X11 *bounding* shape -- it cuts the middle out visually, but on
+ * rootless Xwayland (KWin) the Wayland surface's input region is built from the X11 *input*
+ * shape, which defaults to the whole window when unset. So without this the gap looks
+ * see-through yet still swallows clicks. Mirror the mask into ShapeInput so the hole is
+ * genuinely click-/touch-through. Native X11 honors this too (it's a no-op-safe addition). */
+void SplitKeyboard::setInputShape(const QRegion &region)
+{
+	auto *x11 = qApp->nativeInterface<QNativeInterface::QX11Application>();
+	if (!x11)
+		return;                          // not on xcb -- no X11 shape to set
+	Display *display = x11->display();
+	if (!display)
+		return;
+
+	QVector<XRectangle> rects;
+	rects.reserve(region.rectCount());
+	for (const QRect &r : region)
+		rects.append(XRectangle{
+			static_cast<short>(r.x()),      static_cast<short>(r.y()),
+			static_cast<unsigned short>(r.width()), static_cast<unsigned short>(r.height())});
+
+	XShapeCombineRectangles(display, winId(), ShapeInput, 0, 0,
+	                        rects.data(), rects.size(), ShapeSet, Unsorted);
 }
 
 

@@ -49,7 +49,7 @@ set ( RSCS
 )
 
 add_executable( splitkeyboard ${SOURCES} ${RSCS} )
-target_link_libraries ( splitkeyboard  Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Svg Qt6::DBus X11 Xtst xcb )
+target_link_libraries ( splitkeyboard  Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Svg Qt6::DBus X11 Xtst Xext xcb )
 
 install( TARGETS splitkeyboard DESTINATION bin )
 install( FILES ${APP_ID}.desktop DESTINATION share/applications )

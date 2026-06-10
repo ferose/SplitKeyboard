@@ -16,7 +16,7 @@ Highlights:
 - **Hybrid modifiers** — tap to arm one for the next key, or hold it to type a chord; Caps is a classic lock.
 - **Multitouch** — two thumbs at once.
 - **Ghosted panel** — semi-transparent, so you can see what's behind it.
-- **Global hotkey** — `Super+Ctrl+K` toggles the keyboard from anywhere; the tray icon and
+- **Global hotkey** — `Super+K` toggles the keyboard from anywhere; the tray icon and
   re-launching the app do too.
 - **Start on login** — an optional tray toggle; when on, SplitKeyboard launches at login
   minimized to the tray (show it with the hotkey or tray icon).
@@ -71,7 +71,7 @@ flatpak run org.flatpak.Builder --force-clean --user --install \
 ## Run
 
 Launch **SplitKeyboard** from your application launcher — it installs like any other app.
-Toggle it from anywhere with `Super+Ctrl+K`, or from the tray icon.
+Toggle it from anywhere with `Super+K`, or from the tray icon.
 
 To start it from a terminal instead:
 
@@ -82,10 +82,12 @@ flatpak run online.ferose.SplitKeyboard -platform xcb
 `-platform xcb` forces X11, which the input and window-masking code requires; the desktop
 launcher already passes it.
 
-> **X11 only.** The keystroke injection (`XTest`) and global hotkey (`XGrabKey`) are X11
-> mechanisms. On a Wayland session the app runs through XWayland but **cannot type into
-> native Wayland windows**, so use it on an X11 desktop — e.g. the Steam Deck's desktop
-> mode (KDE Plasma X11).
+> **X11 only.** The keystroke injection (`XTest`) is an X11 mechanism, so on a Wayland
+> session the app runs through XWayland but **cannot type into native Wayland windows** —
+> use it on an X11 desktop, e.g. the Steam Deck's desktop mode (KDE Plasma X11). The toggle
+> hotkey is the exception: on KDE it registers with KGlobalAccel, so `Super+K` toggles the
+> keyboard even under a Wayland session (off KDE it falls back to an X11 `XGrabKey`, which
+> only works on X11).
 
 ## Configure
 

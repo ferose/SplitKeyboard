@@ -48,6 +48,10 @@ private:
 	/* Prepare the layout of the keyboard */
 	void relayKeyboard();
 
+	/* Apply `region` as the X11 input shape (ShapeInput) so the masked-out middle gap is
+	 * click-/touch-through under rootless Xwayland, not just visually transparent. */
+	void setInputShape(const QRegion &region);
+
 	/* Compact or fixed mode */
     bool mMode;
 
@@ -98,11 +102,17 @@ private:
 
 	settings *smi;
 
-	/* Global hotkey (Super+Ctrl+K) to toggle visibility, grabbed via XGrabKey on the X11
-	 * root window so it fires regardless of which window has focus. */
+	/* Global hotkey (Super+K) to toggle visibility. On KDE we register it with the
+	 * KGlobalAccel daemon over D-Bus (registerKGlobalAccelHotkey) so it fires regardless
+	 * of which window has focus -- crucially including native Wayland windows, where a raw
+	 * XGrabKey is never delivered (under Xwayland the grab only reaches us while an X11
+	 * window is focused, so otherwise the bare 'k' gets typed). Off KDE we fall back to an
+	 * XGrabKey on the X11 root window (the path that also drives nativeEventFilter). */
 	void registerGlobalHotkey();
-	int  mHotkeyKeycode = 0;     /* X11 keycode of the toggle key (0 = not grabbed) */
-	uint mHotkeyMods    = 0;     /* required modifier mask (Super+Ctrl) */
+	bool registerKGlobalAccelHotkey();   /* true if KDE's KGlobalAccel claimed the hotkey */
+	int  mHotkeyKeycode = 0;     /* X11 keycode of the toggle key (0 = not grabbed / using KGlobalAccel) */
+	uint mHotkeyMods    = 0;     /* required modifier mask (Super) */
+	bool mHotkeyDown    = false; /* hotkey physically held? edge-detect to swallow auto-repeat */
 
     /* Toggle Comapct UI keyboard */
     void modeCompact();
