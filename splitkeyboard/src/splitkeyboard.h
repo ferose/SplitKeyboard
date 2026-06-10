@@ -49,8 +49,15 @@ private:
 	void relayKeyboard();
 
 	/* Apply `region` as the X11 input shape (ShapeInput) so the masked-out middle gap is
-	 * click-/touch-through under rootless Xwayland, not just visually transparent. */
+	 * click-/touch-through under rootless Xwayland, not just visually transparent. Stores
+	 * the region in mInputShape and applies it both now and again deferred: Qt flushes its
+	 * own (whole-window) input-region update at the end of the current event-loop pass,
+	 * *after* this call, clobbering it -- so we re-assert on the next pass via a queued
+	 * reapplyInputShape(), which lands last and sticks. */
 	void setInputShape(const QRegion &region);
+	void scheduleInputShapeReapply();  /* apply now + at staggered delays (Qt resets it late) */
+	void reapplyInputShape();    /* re-assert mInputShape on the current winId() */
+	QRegion mInputShape;         /* last input-shape region (the left+right cluster boxes) */
 
 	/* Compact or fixed mode */
     bool mMode;

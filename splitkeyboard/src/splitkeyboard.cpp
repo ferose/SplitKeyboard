@@ -44,6 +44,7 @@
 #include <QDBusMessage>
 #include <QDBusReply>
 #include <QSvgRenderer>
+#include <QTimer>
 
 #include <X11/extensions/XTest.h>
 #include <X11/extensions/shape.h>
@@ -520,22 +521,59 @@ void SplitKeyboard::relayKeyboard()
  * genuinely click-/touch-through. Native X11 honors this too (it's a no-op-safe addition). */
 void SplitKeyboard::setInputShape(const QRegion &region)
 {
+	mInputShape = region;
+	scheduleInputShapeReapply();
+}
+
+/* The input shape gets clobbered two ways, both *after* a setInputShape() call:
+ *  - Qt recreates the native window when it applies the dock/translucent flags, so our shape
+ *    lands on the soon-to-be-destroyed old winId() (see the WinIdChange handler in event(),
+ *    which re-schedules this for the new window); and
+ *  - Qt resets the new window's input region to the whole window as it finishes showing it.
+ * Both land later than the next event-loop pass, so re-assert at staggered delays; whichever
+ * fires after Qt's last reset is the final writer and sticks. Without this the gap looks
+ * see-through (setMask's bounding shape) but still grabs every click. */
+void SplitKeyboard::scheduleInputShapeReapply()
+{
+	reapplyInputShape();
+	for (int ms : {0, 80, 200, 500, 1000, 2000, 3500})
+		QTimer::singleShot(ms, this, &SplitKeyboard::reapplyInputShape);
+}
+
+void SplitKeyboard::reapplyInputShape()
+{
 	auto *x11 = qApp->nativeInterface<QNativeInterface::QX11Application>();
 	if (!x11)
 		return;                          // not on xcb -- no X11 shape to set
 	Display *display = x11->display();
-	if (!display)
+	if (!display || mInputShape.isEmpty())
 		return;
 
+	/* Target windowHandle()->winId(), NOT QWidget::winId(). Qt recreates the platform window
+	 * when it applies the dock/translucent flags, but QWidget::winId()/internalWinId() keep
+	 * returning the *old, destroyed* id -- so shaping winId() hits a dead window (the input
+	 * shape silently never applied, which is why the gap stayed click-grabbing). windowHandle()
+	 * tracks the live window. Qt re-applies its own setMask (bounding) there but not our manual
+	 * ShapeInput, so we re-assert it here. */
+	QWindow *wh = windowHandle();
+	if (!wh)
+		return;
+	Window xwin = static_cast<Window>(wh->winId());
+
 	QVector<XRectangle> rects;
-	rects.reserve(region.rectCount());
-	for (const QRect &r : region)
+	rects.reserve(mInputShape.rectCount());
+	for (const QRect &r : mInputShape)
 		rects.append(XRectangle{
 			static_cast<short>(r.x()),      static_cast<short>(r.y()),
 			static_cast<unsigned short>(r.width()), static_cast<unsigned short>(r.height())});
 
-	XShapeCombineRectangles(display, winId(), ShapeInput, 0, 0,
+	XShapeCombineRectangles(display, xwin, ShapeInput, 0, 0,
 	                        rects.data(), rects.size(), ShapeSet, Unsorted);
+
+	/* Flush the Xlib output buffer: this is a raw Xlib request on the QX11Application Display,
+	 * whose buffer Qt never flushes on its own (Qt drives the window through xcb). XSync also
+	 * makes the change take effect synchronously. */
+	XSync(display, False);
 }
 
 
@@ -598,6 +636,15 @@ bool SplitKeyboard::event(QEvent *e)
 	case QEvent::TouchEnd:
 		handleTouch(static_cast<QTouchEvent *>(e));
 		return true;
+
+	case QEvent::WinIdChange:
+		/* Qt recreated the native window (applying the dock/translucent flags); our input
+		 * shape lived on the old, now-destroyed window. Re-apply it to the new winId() --
+		 * Qt re-applies its own setMask (bounding shape) on recreation, but not our manual
+		 * ShapeInput, so the click-through hole would otherwise be lost. */
+		if (!mInputShape.isEmpty())
+			scheduleInputShapeReapply();
+		return QWidget::event(e);
 
 	default:
 		return QWidget::event(e);
