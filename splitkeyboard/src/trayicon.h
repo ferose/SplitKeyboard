@@ -67,9 +67,9 @@ public:
 		// Parent to the widget: QSystemTrayIcon::setContextMenu does not take ownership.
 		QMenu *menu = new QMenu("TrayMenu", parent);
 
-        /* "\tSuper+Ctrl+K" renders as a right-aligned shortcut hint; it's informational
-         * only -- the real toggle is a global XGrabKey, not a Qt action shortcut. */
-        menu->addAction(QIcon(), "&Toggle Visible\tSuper+Ctrl+K", this, &trayicon::toggleShowHide);
+        /* "\tSuper+K" renders as a right-aligned shortcut hint; it's informational only --
+         * the real toggle is a global KGlobalAccel/XGrabKey binding, not a Qt action shortcut. */
+        menu->addAction(QIcon(), "&Toggle Visible\tSuper+K", this, &trayicon::toggleShowHide);
 
         /* "Start on login": writes/removes a host XDG autostart .desktop (see autostart.h).
          * The .desktop's presence is the source of truth, so the check state is read from it

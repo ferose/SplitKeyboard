@@ -102,7 +102,7 @@ SplitKeyboard::SplitKeyboard() : QWidget()
 		qWarning() << "SplitKeyboard: not running on X11 (xcb); key injection disabled. Launch with -platform xcb.";
 	}
 
-	/* Global show/hide hotkey (Super+Ctrl+K), grabbed on the X11 root window. */
+	/* Global show/hide hotkey (Super+K): KGlobalAccel on KDE, else an X11 root grab. */
 	registerGlobalHotkey();
 	qApp->installNativeEventFilter(this);
 
@@ -286,7 +286,7 @@ void SplitKeyboard::registerGlobalHotkey()
 	XSetErrorHandler(sPrevXErrorHandler);
 
 	if (sHotkeyGrabFailed)
-		qWarning() << "SplitKeyboard: Super+Ctrl+K is already grabbed by another app; toggle hotkey disabled.";
+		qWarning() << "SplitKeyboard: Super+K is already grabbed by another app; toggle hotkey disabled.";
 }
 
 bool SplitKeyboard::nativeEventFilter(const QByteArray &eventType, void *message, qintptr *)
