@@ -114,6 +114,8 @@ private:
 	 * XGrabKey on the X11 root window (the path that also drives nativeEventFilter). */
 	void registerGlobalHotkey();
 	bool registerKGlobalAccelHotkey();   /* true if KDE's KGlobalAccel claimed the hotkey */
+	void registerX11GrabHotkey();        /* non-KDE fallback: XGrabKey on the root window */
+	bool mKGAConnected  = false; /* KGlobalAccel trigger signal connected? (connect only once) */
 	int  mHotkeyKeycode = 0;     /* X11 keycode of the toggle key (0 = not grabbed / using KGlobalAccel) */
 	uint mHotkeyMods    = 0;     /* required modifier mask (Super) */
 	bool mHotkeyDown    = false; /* hotkey physically held? edge-detect to swallow auto-repeat */

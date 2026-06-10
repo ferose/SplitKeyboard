@@ -45,6 +45,14 @@
     <url type="vcs-browser">https://github.com/ferose/SplitKeyboard</url>
 
     <releases>
+        <release version="1.3.1" date="2026-06-10">
+            <description>
+                <p>Changes in this release:</p>
+                <ul>
+                    <li>Fixed the Super+K hotkey not working after a reboot: when launched at login (Start on login), the app could start before KDE's global-shortcut service was ready and miss the registration. It now waits for the service and registers as soon as it appears.</li>
+                </ul>
+            </description>
+        </release>
         <release version="1.3.0" date="2026-06-09">
             <description>
                 <p>Changes in this release:</p>

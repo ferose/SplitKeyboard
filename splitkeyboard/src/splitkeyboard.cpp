@@ -43,6 +43,7 @@
 #include <QDBusInterface>
 #include <QDBusMessage>
 #include <QDBusReply>
+#include <QDBusServiceWatcher>
 #include <QSvgRenderer>
 #include <QTimer>
 
@@ -184,8 +185,9 @@ SplitKeyboard::~SplitKeyboard()
  * under Xwayland: the X11 grab is only delivered to us while an X11 window is focused, so
  * with a Wayland window focused the keypress fell through and typed a bare 'k'. (On KDE
  * X11 this path also sidesteps the active-grab side effect that closed the Kickoff menu.)
- * Returns false when KGlobalAccel isn't on the session bus -- i.e. not a KDE session -- so
- * registerGlobalHotkey() falls back to the X11 root grab. */
+ * Returns false when KGlobalAccel isn't on the session bus *yet* -- at login the daemon often
+ * starts after us (autostart race), so registerGlobalHotkey() also watches for it to appear
+ * and calls this again. Idempotent: safe to call repeatedly (e.g. when the daemon restarts). */
 bool SplitKeyboard::registerKGlobalAccelHotkey()
 {
 	QDBusConnection bus = QDBusConnection::sessionBus();
@@ -227,19 +229,25 @@ bool SplitKeyboard::registerKGlobalAccelHotkey()
 		         QVariant::fromValue<uint>(2));
 	}
 
-	/* The daemon emits globalShortcutPressed on the component object when the key fires;
-	 * route it straight to toggleShowHide() (Qt drops the signal's extra args). This is the
-	 * only action in the component, so every emission is ours -- no filtering needed. */
-	const bool ok = bus.connect(
-		QStringLiteral("org.kde.kglobalaccel"),
-		QStringLiteral("/component/splitkeyboard"),
-		QStringLiteral("org.kde.kglobalaccel.Component"),
-		QStringLiteral("globalShortcutPressed"),
-		this, SLOT(toggleShowHide()));
-	if (!ok)
+	/* Connect the trigger signal exactly once. The daemon emits globalShortcutPressed on the
+	 * component object when the key fires; route it straight to toggleShowHide() (Qt drops the
+	 * signal's extra args). Only one action in the component, so every emission is ours -- no
+	 * filtering needed. The match rule is keyed on the service name, so it survives a daemon
+	 * restart; we just re-assert doRegister/setShortcut above (driven by the service watcher),
+	 * not reconnect -- hence the mKGAConnected guard (a second connect would double-toggle). */
+	if (!mKGAConnected)
 	{
-		qWarning() << "SplitKeyboard: KGlobalAccel registered but signal connect failed; falling back to X11 grab.";
-		return false;
+		if (!bus.connect(
+			QStringLiteral("org.kde.kglobalaccel"),
+			QStringLiteral("/component/splitkeyboard"),
+			QStringLiteral("org.kde.kglobalaccel.Component"),
+			QStringLiteral("globalShortcutPressed"),
+			this, SLOT(toggleShowHide())))
+		{
+			qWarning() << "SplitKeyboard: KGlobalAccel registered but signal connect failed.";
+			return false;
+		}
+		mKGAConnected = true;
 	}
 
 	return true;
@@ -247,17 +255,38 @@ bool SplitKeyboard::registerKGlobalAccelHotkey()
 
 void SplitKeyboard::registerGlobalHotkey()
 {
-	/* Prefer KDE's KGlobalAccel (the only reliable path under Wayland). Only fall back to
-	 * a raw X11 root grab when it's unavailable -- i.e. a non-KDE session. */
-	if (registerKGlobalAccelHotkey())
-		return;
+	/* Prefer KDE's KGlobalAccel (the only path that works under Wayland). The daemon isn't
+	 * D-Bus-activatable and at login often registers on the bus *after* we autostart, so watch
+	 * for it and (re)register when it appears -- this also re-asserts our action if the daemon
+	 * restarts mid-session. Set the watcher up before the first attempt. */
+	auto *watcher = new QDBusServiceWatcher(QStringLiteral("org.kde.kglobalaccel"),
+	                                        QDBusConnection::sessionBus(),
+	                                        QDBusServiceWatcher::WatchForRegistration, this);
+	connect(watcher, &QDBusServiceWatcher::serviceRegistered,
+	        this, [this] { registerKGlobalAccelHotkey(); });
 
+	if (registerKGlobalAccelHotkey())
+		return;   // daemon already up (e.g. launched by hand) -- watcher stays for restarts
+
+	/* Not on the bus yet. On a KDE session it'll appear shortly and the watcher registers us.
+	 * If it never does (not KDE), fall back after a grace period to a raw X11 root grab, which
+	 * works on a real X11 session. (Under Wayland the grab is never delivered, but there
+	 * KGlobalAccel is the only option anyway, so the wait simply continues.) */
+	QTimer::singleShot(10000, this, [this] {
+		if (!mKGAConnected)
+			registerX11GrabHotkey();
+	});
+}
+
+/* Fallback hotkey for non-KDE X11 sessions: a passive XGrabKey on the root window. */
+void SplitKeyboard::registerX11GrabHotkey()
+{
 	Display *display = x11Display();   // null off xcb -- no root to grab on
 	if (!display)
 		return;
 
 	/* This X11-grab backend is the only one that needs the raw-event filter (to edge-detect
-	   the grabbed key); the KGlobalAccel path above returned already, so install it here. */
+	   the grabbed key); install it here rather than unconditionally at construction. */
 	qApp->installNativeEventFilter(this);
 
 	mHotkeyKeycode = XKeysymToKeycode(display, XK_k);
