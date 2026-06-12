@@ -216,18 +216,24 @@ bool SplitKeyboard::registerKGlobalAccelHotkey()
 	 * it from kglobalshortcutsrc). */
 	kga.call(QStringLiteral("doRegister"), actionId);
 
-	/* Assign our default Super+K only if nothing is bound yet -- if the user rebound it in
-	 * System Settings, respect that. Qt's combined key int: Qt::MetaModifier (Super) | K. */
+	/* Re-assert the active shortcut on EVERY launch. doRegister above loads the stored keys
+	 * into kglobalacceld's database but, under Wayland, does NOT (re)install the actual key
+	 * grab in KWin -- only setShortcut with SetPresent does. So once the first run persists
+	 * Meta+K to kglobalshortcutsrc, later launches that skipped setShortcut left the shortcut
+	 * registered-but-dead (Super+K silently stopped working after a reboot). Re-set it to
+	 * whatever is currently bound -- which preserves a user's System Settings rebinding,
+	 * since we read it back first -- or fall back to our Meta+K default if nothing is bound
+	 * yet. Qt's combined key int: Qt::MetaModifier (Super) | K. */
 	const int metaK = int(Qt::MetaModifier) | int(Qt::Key_K);
 	QDBusReply<QList<int>> current = kga.call(QStringLiteral("shortcut"), actionId);
-	if (!current.isValid() || current.value().isEmpty())
-	{
-		/* KGlobalAccel::SetShortcutFlag::SetPresent (== 2): make these keys the active
-		 * shortcut. Passed as uint to match the method's 'u' flags argument. */
-		kga.call(QStringLiteral("setShortcut"), actionId,
-		         QVariant::fromValue(QList<int>{ metaK }),
-		         QVariant::fromValue<uint>(2));
-	}
+	const QList<int> keys = (current.isValid() && !current.value().isEmpty())
+	                        ? current.value()
+	                        : QList<int>{ metaK };
+	/* KGlobalAccel::SetShortcutFlag::SetPresent (== 2): make these keys the active shortcut
+	 * (and install the KWin grab). Passed as uint to match the method's 'u' flags argument. */
+	kga.call(QStringLiteral("setShortcut"), actionId,
+	         QVariant::fromValue(keys),
+	         QVariant::fromValue<uint>(2));
 
 	/* Connect the trigger signal exactly once. The daemon emits globalShortcutPressed on the
 	 * component object when the key fires; route it straight to toggleShowHide() (Qt drops the

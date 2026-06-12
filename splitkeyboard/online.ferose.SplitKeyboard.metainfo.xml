@@ -45,6 +45,14 @@
     <url type="vcs-browser">https://github.com/ferose/SplitKeyboard</url>
 
     <releases>
+        <release version="1.3.2" date="2026-06-11">
+            <description>
+                <p>Changes in this release:</p>
+                <ul>
+                    <li>Fixed the Super+K hotkey silently dying after a reboot on Wayland: the shortcut was registered but its key grab was never re-installed in KWin, so the keypress did nothing. The app now re-asserts the active shortcut on every launch (preserving any rebinding you made in System Settings).</li>
+                </ul>
+            </description>
+        </release>
         <release version="1.3.1" date="2026-06-10">
             <description>
                 <p>Changes in this release:</p>
